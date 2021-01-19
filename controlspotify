@@ -14,6 +14,13 @@ playlists='[
 ]'
 
 function selectPlaylist() {
+        # include here all listed playlists inside of this function below
+        selection=(Worship Elektro Guitar)
+        # when no input for a playlist is passed into this function, it will randomly
+        input=$1
+        if [ -z "$1" ]; then
+        input=${selection[$RANDOM % ${#selection[@]} ]}
+        fi
         if [[ "$input" = "Worship" ]]; then
                 user="f7f7f"
                 playlist="2NFqwWx2Oo5PBGmfDmbUGE"
@@ -79,8 +86,7 @@ if [[ "$1" = "continue" ]]; then
         # if return is null
                 if [ -z "$whatsPlaying" ]; then
                 echo "Response empty - no song to continue - $whatsPlaying"
-                                input=$(<./db/playlist)
-                                selectPlaylist $input
+                                selectPlaylist
                 # determining a random song to start with
                 lengthPlaylist=$(curl -X GET "https://api.spotify.com/v1/users/${user}/playlists/${playlist}" -H "Accept: application/json" -H "Authorization: Bearer $token" | jq -r '.tracks | select(.total) | .total')
                 max=$lengthPlaylist
@@ -96,8 +102,6 @@ if [[ "$1" = "continue" ]]; then
 
         # Checking if playlist has been given as input to play, then this playlist is played and program is exiting
         if [[ "$2" = "playlist" ]]; then
-                input=$(<./db/playlist)
-
                 if [ ! -z "$3" ]; then
                         echo "zusätzlicher Input vorhanden"
                         input=$3
