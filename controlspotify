@@ -50,7 +50,7 @@ function connectAirplay() {
                 _jq() {
                         echo ${i} | base64 --decode | jq -r ${1}
                 }
-                if [[ ! " ${ausschluss[@]} " =~ " $(_jq '.name') " ]]; then
+                if [[ ! " $(_jq '.name') " =~ " ${ausschluss[@]} " ]]; then
                         if [ "$(_jq '.selected')" = false ]; then
                                 echo "Switching on $(_jq '.name')"
                                 curl -X PUT $HOST_IP:3689/api/outputs/$(_jq '.id')/toggle
