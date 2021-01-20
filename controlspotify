@@ -149,7 +149,7 @@ if [[ "$1" = "continue" ]]; then
         echo "Track selected but paused, will continue"
         #        echo "hier critical Device" $device
         #        echo "hier critical Token" $token
-        #curl -X PUT "https://api.spotify.com/v1/me/player" --data "{\"device_ids\":[\"${device}\"]}" -H "Accept: application/json" -H "Content-Type: application/json" -H "Authorization: Bearer $token"
+        curl -X PUT "https://api.spotify.com/v1/me/player" --data "{\"device_ids\":[\"${device}\"]}" -H "Accept: application/json" -H "Content-Type: application/json" -H "Authorization: Bearer $token"
         sleep .1
         #echo 1
         curl -X PUT "https://api.spotify.com/v1/me/player/volume?volume_percent=100" -H "Accept: application/json" -H "Authorization: Bearer $token"
