@@ -74,8 +74,8 @@ function checkStatus() {
         response=$(curl -s -X GET "https://api.spotify.com/v1/me/player" -H "Accept: application/json" -H "Authorization: Bearer $token")
         # uncomment the following if clause for extensive JSON response from Spotify for debugging
         #if [[ "$debug_mode" = "on" ]]; then
-        #        echo $response
-        # fi
+        #        echo "Initial response: $response"
+        #fi
 
         # check if response was healthy
         error=$(echo $response | jq -r '.error.status')
@@ -151,7 +151,7 @@ if [[ "$1" = "continue" ]]; then
         # Catching the case that no song, album, playlist is selected
         whatsPlaying=$(curl -s -X GET "https://api.spotify.com/v1/me/player" -H "Accept: application/json" -H "Authorization: Bearer $token" | jq -r '.currently_playing_type')
         if [[ "$debug_mode" = "on" ]]; then
-                echo "I am currently playing a $whatsPlaying"
+                echo "I am currently playing $whatsPlaying"
         fi
         if [ -z "$whatsPlaying" ]; then
                 # Nothing to continue, so selecting a random Playlist to play
@@ -248,6 +248,10 @@ fi
 
 if [[ "$1" = "connect_airplay" ]]; then
         connectAirplay
+fi
+
+if [[ "$1" = "disconnect_airplay" ]]; then
+        disconnectAirplay
 fi
 
 if [[ "$1" = "test" ]]; then
