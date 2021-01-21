@@ -8,6 +8,11 @@ if [ -f .env ]; then
         export $(cat .env | sed 's/#.*//g' | xargs)
 fi
 
+if [[ "$*" = *"-debug"* ]]; then
+        debug_mode="on"
+        echo "Debug mode on"
+fi
+
 function selectPlaylist() {
         # include here all listed playlists inside of this function below
         selection=(Worship Elektro Guitar)
@@ -33,19 +38,66 @@ function selectPlaylist() {
 }
 
 function updateToken() {
+        if [[ "$debug_mode" = "on" ]]; then
+                echo "Checking token status ..."
+        fi
         if test ! -f "./token"; then
-                echo $(curl -H "Authorization: Basic $SPOTIFY_ACCESS_TOKEN" -d grant_type=refresh_token -d refresh_token=$SPOTIFY_REFRESH_TOKEN https://accounts.spotify.com/api/token | jq -r '.access_token') >./token
+                if [[ "$debug_mode" = "on" ]]; then
+                        echo "Creating new token ..."
+                fi
+                new_token=$(curl -s -H "Authorization: Basic $SPOTIFY_ACCESS_TOKEN" -d grant_type=refresh_token -d refresh_token=$SPOTIFY_REFRESH_TOKEN https://accounts.spotify.com/api/token | jq -r '.access_token')
+                echo $new_token >./token
+                if [[ "$debug_mode" = "on" ]]; then
+                        echo "New token is: " $new_token
+                fi
                 echo "Created new token file"
+                return
         fi
         if test $(find "./token" -mmin +59); then
-                echo $(curl -H "Authorization: Basic $SPOTIFY_ACCESS_TOKEN" -d grant_type=refresh_token -d refresh_token=$SPOTIFY_REFRESH_TOKEN https://accounts.spotify.com/api/token | jq -r '.access_token') >./token
+                if [[ "$debug_mode" = "on" ]]; then
+                        echo "Updating existing token ..."
+                fi
+                new_token=$(curl -s -H "Authorization: Basic $SPOTIFY_ACCESS_TOKEN" -d grant_type=refresh_token -d refresh_token=$SPOTIFY_REFRESH_TOKEN https://accounts.spotify.com/api/token | jq -r '.access_token') >./token
+                echo $new_token >./token
+                if [[ "$debug_mode" = "on" ]]; then
+                        echo "New token is: " $new_token
+                fi
                 echo "Updated token"
+                return
         fi
+        if [[ "$debug_mode" = "on" ]]; then
+                echo "Using existing token - didn't create new one, didn't update"
+        fi
+}
+
+function checkStatus() {
+        response=$(curl -s -X GET "https://api.spotify.com/v1/me/player" -H "Accept: application/json" -H "Authorization: Bearer $token")
+        # uncomment the following if clause for extensive JSON response from Spotify for debugging
+        #if [[ "$debug_mode" = "on" ]]; then
+        #        echo $response
+        # fi
+
+        # check if response was healthy
+        error=$(echo $response | jq -r '.error.status')
+        if [[ $error = 401 ]]; then
+                message=$(echo $response | jq -r '.error.message')
+                echo "No connection to spotify: $message"
+                exit
+        fi
+        # store relevant info
+        playingType=$(echo $response | jq -r '.context.type')
+        if [ "$playingType" = null ]; then
+                playingType=$(echo $response | jq -r '.currently_playing_type')
+        fi
+        isPlaying=$(echo $response | jq -r '.is_playing')
+        currentSelectedDevice=$(echo $response | jq -r '.device.name')
+        # display relevant info
+        printf "Current status \n #playing: $isPlaying \n #type: $playingType \n #device: $currentSelectedDevice\n"
 }
 
 function connectAirplay() {
         ausschluss=("Apple TV (Wohnzimmer)" Computer) # add here airplay devices by name that you want to exclude from syncing music
-        lautsprecher=$(curl -X GET $HOST_IP:3689/api/outputs | jq '.outputs')
+        lautsprecher=$(curl -s -X GET $HOST_IP:3689/api/outputs | jq '.outputs')
         for i in $(echo "${lautsprecher}" | jq -r '.[] | @base64'); do
                 _jq() {
                         echo ${i} | base64 --decode | jq -r ${1}
@@ -55,6 +107,8 @@ function connectAirplay() {
                                 echo "Switching on $(_jq '.name')"
                                 curl -X PUT $HOST_IP:3689/api/outputs/$(_jq '.id')/toggle
                                 sleep .5
+                        else
+                                echo "$(_jq '.name') already switched on"
                         fi
                 fi
         done
@@ -62,7 +116,7 @@ function connectAirplay() {
 
 function disconnectAirplay() {
         ausschluss=("Apple TV (Wohnzimmer)" Computer) # add here airplay devices by name that you want to exclude from syncing music
-        lautsprecher=$(curl -X GET $HOST_IP:3689/api/outputs | jq '.outputs')
+        lautsprecher=$(curl -s -X GET $HOST_IP:3689/api/outputs | jq '.outputs')
         for i in $(echo "${lautsprecher}" | jq -r '.[] | @base64'); do
                 _jq() {
                         echo ${i} | base64 --decode | jq -r ${1}
@@ -72,6 +126,8 @@ function disconnectAirplay() {
                                 echo "Switching off $(_jq '.name')"
                                 curl -X PUT $HOST_IP:3689/api/outputs/$(_jq '.id')/toggle
                                 sleep .5
+                        else
+                                echo "$(_jq '.name') already switched off"
                         fi
                 fi
         done
@@ -84,23 +140,25 @@ if [[ "$1" = "continue" ]]; then
         # Read token from file
         token=$(<./token)
         # Check connection to spotify and whats currently playing
-        response=$(curl -X GET "https://api.spotify.com/v1/me/player" -H "Accept: application/json" -H "Authorization: Bearer $token") 
-        # uncomment to debug
-        # echo $response
-        whatsPlaying=$(curl -X GET "https://api.spotify.com/v1/me/player" -H "Accept: application/json" -H "Authorization: Bearer $token" | jq -r '.currently_playing_type')
-
-        # Selecting the Raspotify device with name "Spotify-Smart-Home"
-        device=$(curl -X GET "https://api.spotify.com/v1/me/player/devices" -H "Accept: application/json" -H "Authorization: Bearer $token" | jq -r '.devices[] | select(.name == "Spotify-Smart-Home") | .id')
-        #echo "hier" $device
-        # Adding all available Airplay devices
+        checkStatus
+        # Selecting the Raspotify device we want to play the music on, in our case "Spotify-Smart-Home"
+        device=$(curl -s -X GET "https://api.spotify.com/v1/me/player/devices" -H "Accept: application/json" -H "Authorization: Bearer $token" | jq -r '.devices[] | select(.name == "Spotify-Smart-Home") | .id')
+        if [[ "$debug_mode" = "on" ]]; then
+                echo "Device ID: $device"
+        fi
         connectAirplay
 
-        # if return is null
+        # Catching the case that no song, album, playlist is selected
+        whatsPlaying=$(curl -s -X GET "https://api.spotify.com/v1/me/player" -H "Accept: application/json" -H "Authorization: Bearer $token" | jq -r '.currently_playing_type')
+        if [[ "$debug_mode" = "on" ]]; then
+                echo "I am currently playing a $whatsPlaying"
+        fi
         if [ -z "$whatsPlaying" ]; then
-                echo "Response empty - no song to continue - $whatsPlaying - playing random Playlist"
+                # Nothing to continue, so selecting a random Playlist to play
+                echo "No song to continue - playing random Playlist"
                 selectPlaylist
                 # determining a random song to start with
-                lengthPlaylist=$(curl -X GET "https://api.spotify.com/v1/users/${user}/playlists/${playlist}" -H "Accept: application/json" -H "Authorization: Bearer $token" | jq -r '.tracks | select(.total) | .total') >/dev/null 2>&1
+                lengthPlaylist=$(curl -s -X GET "https://api.spotify.com/v1/users/${user}/playlists/${playlist}" -H "Accept: application/json" -H "Authorization: Bearer $token" | jq -r '.tracks | select(.total) | .total') >/dev/null 2>&1
                 max=$lengthPlaylist
                 DIV=$((max + 1))
                 R=$(($RANDOM % $DIV))
@@ -116,12 +174,12 @@ if [[ "$1" = "continue" ]]; then
         # Checking if playlist has been given as input to play, then this playlist is played and program is exiting
         if [[ "$2" = "playlist" ]]; then
                 if [ ! -z "$3" ]; then
-                        echo "zusätzlicher Input vorhanden"
+                        echo "Playlist input $3 registered, selecting it to play"
                         input=$3
                 fi
                 selectPlaylist $input
                 # determining a random song to start with
-                lengthPlaylist=$(curl -X GET "https://api.spotify.com/v1/users/${user}/playlists/${playlist}" -H "Accept: application/json" -H "Authorization: Bearer $token" | jq -r '.tracks | select(.total) | .total')
+                lengthPlaylist=$(curl -s -X GET "https://api.spotify.com/v1/users/${user}/playlists/${playlist}" -H "Accept: application/json" -H "Authorization: Bearer $token" | jq -r '.tracks | select(.total) | .total')
                 max=$lengthPlaylist
                 DIV=$((max + 1))
                 R=$(($RANDOM % $DIV))
@@ -135,29 +193,35 @@ if [[ "$1" = "continue" ]]; then
                 exit
         fi
 
-        # Checking whether music is already playing
-        #curl -X GET "https://api.spotify.com/v1/me/player" -H "Accept: application/json" -H "Authorization: Bearer $token"
-        spielt=$(curl -X GET "https://api.spotify.com/v1/me/player" -H "Accept: application/json" -H "Authorization: Bearer $token" | jq -r '.is_playing')
-
-        # If result is yes, then just switching to the selected device "Spotify-Smart-Home"
-        if [[ "$spielt" = "true" ]]; then
-                echo "Continue current playback, just switching device"
+        # If Spotify is already playing something, then just switching to the selected device "Spotify-Smart-Home"
+        if [[ "$isPlaying" = "true" ]]; then
+                echo "Continue current playback, just switching device to Spotify-Smart-Home"
                 curl -X PUT "https://api.spotify.com/v1/me/player" --data "{\"device_ids\":[\"${device}\"]}" -H "Accept: application/json" -H "Content-Type: application/json" -H "Authorization: Bearer $token"
                 exit
         fi
-        # If no music is playing, continuing music - rapid succession of commands error-prone therefore, small sleep in between
+
+        # If no music is playing, continuing currently selected music - rapid succession of commands error-prone therefore, small sleep in between
         echo "Track selected but paused, will continue"
-        #        echo "hier critical Device" $device
-        #        echo "hier critical Token" $token
+        if [[ "$debug_mode" = "on" ]]; then
+                checkStatus
+                echo "display Device to switch to " $device
+                echo "check value Token" $token
+        fi
+
         curl -X PUT "https://api.spotify.com/v1/me/player" --data "{\"device_ids\":[\"${device}\"]}" -H "Accept: application/json" -H "Content-Type: application/json" -H "Authorization: Bearer $token"
         sleep .1
-        #echo 1
-        curl -X PUT "https://api.spotify.com/v1/me/player/volume?volume_percent=100" -H "Accept: application/json" -H "Authorization: Bearer $token"
-        sleep .1
-        #echo 2
+        if [[ "$debug_mode" = "on" ]]; then
+                checkStatus
+                # Todo - write here potential loop for checking whether device was selected
+                selected_device=$(curl -s -X GET "https://api.spotify.com/v1/me/player/devices" -H "Accept: application/json" -H "Authorization: Bearer $token" | jq -r '.devices[] | select(.name == "Spotify-Smart-Home") | .id')
+                echo "Ausgewaehltes Device: $selected_device"
+        fi
         curl -X PUT "https://api.spotify.com/v1/me/player/play?device_id=${device}" -H "Accept: application/json" -H "Authorization: Bearer $token" -H "Content-Type: application/json" -H "Content-Length: 0"
         sleep .1
-        #echo 3
+        if [[ "$debug_mode" = "on" ]]; then
+                checkStatus
+        fi
+        curl -X PUT "https://api.spotify.com/v1/me/player/volume?volume_percent=100" -H "Accept: application/json" -H "Authorization: Bearer $token"
 fi
 
 if [[ "$1" = "stop" ]]; then
@@ -170,11 +234,14 @@ if [[ "$1" = "stop" ]]; then
         curl -X PUT "https://api.spotify.com/v1/me/player/pause" -H "Accept: application/json" -H "Authorization: Bearer $token" -H "Content-Type: application/json" -H "Content-Length: 0"
         # Select my iPhone as device
         #curl -X GET "https://api.spotify.com/v1/me/player/devices" -H "Accept: application/json" -H "Authorization: Bearer $token"
-        device=$(curl -X GET "https://api.spotify.com/v1/me/player/devices" -H "Accept: application/json" -H "Authorization: Bearer $token" | jq -r '.devices[] | select(.name == "F iPhone Xs") | .id')
-        #echo $device
-        curl -X "PUT" "https://api.spotify.com/v1/me/player" --data "{\"device_ids\":[\"${device}\"]}" -H "Accept: application/json" -H "Content-Type: application/json" -H "Authorization: Bearer $token"
+        device=$(curl -s -X GET "https://api.spotify.com/v1/me/player/devices" -H "Accept: application/json" -H "Authorization: Bearer $token" | jq -r '.devices[] | select(.name == "F iPhone Xs") | .id')
+        if [ ! -z "$device" ]; then
+                curl -X "PUT" "https://api.spotify.com/v1/me/player" --data "{\"device_ids\":[\"${device}\"]}" -H "Accept: application/json" -H "Content-Type: application/json" -H "Authorization: Bearer $token"
+                echo "Disconnected from Spotify-Smart-Home"
+        fi
+        echo "Stopped the playback"
         if [[ "$2" = "disconnect" ]]; then
-        disconnectAirplay
+                disconnectAirplay
         fi
 
 fi
@@ -183,14 +250,14 @@ if [[ "$1" = "connect_airplay" ]]; then
         connectAirplay
 fi
 
-if [[ "$1" = "test_connection" ]]; then
-
+if [[ "$1" = "test" ]]; then
+        if [[ "$debug_mode" = "on" ]]; then
+                echo "Testing ..."
+        fi
         # Check if Token is new enough
         updateToken
         # Read token from file
         token=$(<./token)
-        # Check connection to spotify
-        status=$(curl -X GET "https://api.spotify.com/v1/me/player" -H "Accept: application/json" -H "Authorization: Bearer $token")
-        curl -X GET "https://api.spotify.com/v1/me/player" -H "Accept: application/json" -H "Authorization: Bearer $token"
-        echo $status
+        # Check the status and display information
+        checkStatus
 fi
